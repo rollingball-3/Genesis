@@ -7,3 +7,6 @@
 [submodule "genesis/ext/ParticleMesher"]
 	path = genesis/ext/ParticleMesher
 	url = https://github.com/ACMLCZH/ParticleMesher
+[submodule "genesis/ext/FABRICS"]
+	path = genesis/ext/FABRICS
+	url = git@github.com:rollingball-3/FABRICS.git

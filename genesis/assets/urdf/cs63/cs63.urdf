@@ -1,0 +1,256 @@
+<?xml version="1.0"?>
+<robot name="cs63">
+  
+  <!-- Materials -->
+  <material name="LightGrey">
+    <color rgba="0.7 0.7 0.7 1.0"/>
+  </material>
+  
+  <!-- Base link -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/base.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/base.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.358193760044688"/>
+      <origin xyz="-0.000721181367009438 1.78114684963572e-05 0.0546249293265112" rpy="0 0 0"/>
+      <inertia ixx="0.000549739542527148" ixy="8.03741216179988e-08" ixz="-9.14780809458034e-06" 
+               iyy="0.000533024165382036" iyz="3.46908903534662e-07" izz="0.000655188839052244"/>
+    </inertial>
+  </link>
+  
+  <!-- Shoulder link -->
+  <link name="shoulder_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/shoulder.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/shoulder.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="3.095"/>
+      <origin xyz="3.7e-05 -0.0149 -0.0105" rpy="0 0 0"/>
+      <inertia ixx="0.007958" ixy="5.734e-06" ixz="3.024e-06" 
+               iyy="0.00484" iyz="-1.77e-05" izz="0.006686"/>
+    </inertial>
+  </link>
+  
+  <!-- Upperarm link -->
+  <link name="upperarm_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/upperarm.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/upperarm.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="5.073"/>
+      <origin xyz="-0.11596 -2.6e-05 0.1148" rpy="0 0 0"/>
+      <inertia ixx="0.074168" ixy="-7.5e-06" ixz="-0.065579" 
+               iyy="0.21937" iyz="-2.19e-05" izz="0.15104"/>
+    </inertial>
+  </link>
+  
+  <!-- Forearm link -->
+  <link name="forearm_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/forearm.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/forearm.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="2.425"/>
+      <origin xyz="-0.1542 1.4e-05 0.0238" rpy="0 0 0"/>
+      <inertia ixx="0.005082" ixy="-2.7e-06" ixz="-0.0056236" 
+               iyy="0.0924207" iyz="-1.726e-06" izz="0.0897559"/>
+    </inertial>
+  </link>
+  
+  <!-- Wrist 1 link -->
+  <link name="wrist_1_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/wrist1.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wrist1.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.559"/>
+      <origin xyz="1.3e-05 -0.00479 -0.02274" rpy="0 0 0"/>
+      <inertia ixx="0.0045009" ixy="1.96e-06" ixz="-2.646e-06" 
+               iyy="0.0042164" iyz="-3.58e-07" izz="0.0014538"/>
+    </inertial>
+  </link>
+  
+  <!-- Wrist 2 link -->
+  <link name="wrist_2_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/wrist2.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wrist2.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.447"/>
+      <origin xyz="-1.4e-05 0.0051 -0.0127" rpy="0 0 0"/>
+      <inertia ixx="0.0023787" ixy="1.953e-06" ixz="2.643e-06" 
+               iyy="0.0020859" iyz="5.584e-06" izz="0.0013191"/>
+    </inertial>
+  </link>
+  
+  <!-- Wrist 3 link -->
+  <link name="wrist_3_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/wrist3.dae"/>
+      </geometry>
+      <material name="LightGrey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wrist3.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <origin xyz="-0.000684 -0.000175 -0.0423" rpy="0 0 0"/>
+      <inertia ixx="0.001431" ixy="-2.32e-07" ixz="7.955e-06" 
+               iyy="0.0014299" iyz="1.266e-06" izz="0.0003265"/>
+    </inertial>
+  </link>
+  
+  <!-- Joint 1: Shoulder Pan -->
+  <joint name="shoulder_pan_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="shoulder_link"/>
+    <origin xyz="0 0 0.153" 
+            rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-6.283185307179586" upper="6.283185307179586" 
+           effort="56.0" velocity="3.141592653589793"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+  
+  <!-- Joint 2: Shoulder Lift -->
+  <joint name="shoulder_lift_joint" type="revolute">
+    <parent link="shoulder_link"/>
+    <child link="upperarm_link"/>
+    <origin xyz="0 0 0" 
+            rpy="1.570796326589793 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-6.283185307179586" upper="6.283185307179586" 
+           effort="56.0" velocity="3.141592653589793"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+  
+  <!-- Joint 3: Elbow -->
+  <joint name="elbow_joint" type="revolute">
+    <parent link="upperarm_link"/>
+    <child link="forearm_link"/>
+    <origin xyz="-0.27 0 0" 
+            rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" 
+           effort="28.0" velocity="3.141592653589793"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+  
+  <!-- Joint 4: Wrist 1 -->
+  <joint name="wrist_1_joint" type="revolute">
+    <parent link="forearm_link"/>
+    <child link="wrist_1_link"/>
+    <origin xyz="-0.2575 0 0.1445" 
+            rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-6.283185307179586" upper="6.283185307179586" 
+           effort="12.0" velocity="6.283185307179586"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+  
+  <!-- Joint 5: Wrist 2 -->
+  <joint name="wrist_2_joint" type="revolute">
+    <parent link="wrist_1_link"/>
+    <child link="wrist_2_link"/>
+    <origin xyz="0 -0.0965 0" 
+            rpy="1.570796326589793 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-6.283185307179586" upper="6.283185307179586" 
+           effort="12.0" velocity="6.283185307179586"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+  
+  <!-- Joint 6: Wrist 3 -->
+  <joint name="wrist_3_joint" type="revolute">
+    <parent link="wrist_2_link"/>
+    <child link="wrist_3_link"/>
+    <origin xyz="0 0.092 0" 
+            rpy="-1.570796326589793 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-6.283185307179586" upper="6.283185307179586" 
+           effort="12.0" velocity="6.283185307179586"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Delto gripper base link -->
+  <link name="delto_base_link_cs63">
+    <collision>
+        <origin xyz="0.0 0.0 -0.08425" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.035" length="0.0448"/>
+        </geometry>
+    </collision>
+  </link>
+  <joint name="delto_base_link_cs63_joint" type="fixed">
+    <parent link="wrist_3_link"/>
+    <child link="delto_base_link_cs63"/>
+    <origin xyz="0.0 0.0 0.11415" rpy="0 0 0"/>
+  </joint>
+</robot>
