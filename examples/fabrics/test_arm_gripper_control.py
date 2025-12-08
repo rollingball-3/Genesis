@@ -62,7 +62,7 @@ def load_joint_config(yaml_path: str | Path) -> tuple[list, list]:
 
 
 def test_1_initial_config(scene, manipulator, camera, output_dir, device):
-    """Test 1: Hold initial joint configuration from YAML."""
+    """Test 1: Hold initial joint configuration from YAML using PD (v_des = 0)."""
     print("\n" + "=" * 60)
     print("Test 1: Hold Initial Joint Configuration")
     print("=" * 60)
@@ -77,18 +77,23 @@ def test_1_initial_config(scene, manipulator, camera, output_dir, device):
     arm_target = torch.tensor(arm_joints, device=device)
     gripper_target = torch.tensor(gripper_joints, device=device)
     
-    # Command to target positions
-    manipulator.command_arm(arm_target)
-    manipulator.command_gripper(gripper_target)
+    # Prepare PD targets: desired position with zero velocity for stability
+    arm_pos = arm_target.unsqueeze(0)  # [1, 6]
+    grip_pos = gripper_target.unsqueeze(0)  # [1, 12]
+    arm_vel = torch.zeros_like(arm_pos, device=device)
+    grip_vel = torch.zeros_like(grip_pos, device=device)
     
     # Start recording
     video_path = os.path.join(output_dir, "01_initial_config.mp4")
     camera.start_recording()
     
-    # Run simulation
+    # Run simulation with PD control (position + zero velocity)
     total_steps = 300
     print(f"Running {total_steps} steps...")
     for step in range(total_steps):
+        # PD control at each step: position + zero velocity
+        manipulator.command_arm_position_velocity(position=arm_pos, velocity=arm_vel)
+        manipulator.command_gripper_position_velocity(position=grip_pos, velocity=grip_vel)
         scene.step()
         camera.render()
         
@@ -137,7 +142,7 @@ def main():
     
     # Add manipulator (base elevated to 0.6m to avoid ground collision)
     device = "cuda:0"
-    manipulator = Manipulator(scene=scene, num_envs=1, ik_method="gs_ik", device=device, base_height=0.6)
+    manipulator = Manipulator(scene=scene, num_envs=1, device=device, base_height=0.6)
     
     # Add camera
     camera = scene.add_camera(

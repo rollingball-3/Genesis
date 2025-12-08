@@ -4,7 +4,7 @@ validated in ``test_arm_gripper_connection.py``.
 
 Includes ThrowEnv for RL training and Manipulator class for programmatic control.
 """
-from typing import Sequence, Literal
+from typing import Sequence
 import os
 from pathlib import Path
 import math
@@ -14,11 +14,6 @@ import torch
 import yaml
 
 import genesis as gs
-from genesis.utils.geom import (
-    xyz_to_quat,
-    transform_quat_by_quat,
-    transform_by_quat,
-)
 
 def disable_collision_between_links(entity, link_name_a, link_name_b):
     """Disable collision between two links by modifying collision pair validity."""
@@ -131,11 +126,8 @@ class ThrowEnv:
         self.robot = Manipulator(
             num_envs=self.num_envs,
             scene=self.scene,
-            ik_method=robot_cfg.get("ik_method", "gs_ik"),
             device=self.device,
             base_height=robot_cfg.get("base_height", 0.0),
-            action_scale=robot_cfg.get("action_scale", 1.0),
-            dls_lambda=robot_cfg.get("dls_lambda", 0.01),
         )
 
         # == add throwable object ==
@@ -306,20 +298,15 @@ class Manipulator:
         self, 
         scene: gs.Scene, 
         num_envs: int, 
-        ik_method: Literal["gs_ik", "dls_ik"] = "gs_ik",
         device: str = "cuda:0",
         base_height: float = 0.0,
-        action_scale: float = 1.0,
-        dls_lambda: float = 0.01
     ) -> None:
         self._scene = scene
         self._num_envs = num_envs
         self._device = device
-        self._ik_method = ik_method
-        self._action_scale = action_scale
-        self._dls_lambda = dls_lambda
         
         from genesis.engine.entities.rigid_entity import RigidEntity
+        # 分开加载因为
         self.arm_entity:RigidEntity = scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/cs63/cs63.urdf",
@@ -398,6 +385,11 @@ class Manipulator:
         self._finger2_tip_link = self.gripper_entity.get_link("F2_TIP")
         self._finger3_tip_link = self.gripper_entity.get_link("F3_TIP")
         
+        # Force frame links (defined in cs63_tesollo.urdf)
+        self._tip1_force_frame = self.gripper_entity.get_link("tip1_force_frame")
+        self._tip2_force_frame = self.gripper_entity.get_link("tip2_force_frame")
+        self._tip3_force_frame = self.gripper_entity.get_link("tip3_force_frame")
+        
         # Palm link (gripper base control frame)
         self._palm_link = self.gripper_entity.get_link("palm_link")
         
@@ -451,71 +443,6 @@ class Manipulator:
         
         # Set gripper positions
         self.gripper_entity.set_qpos(default_joint_angles[:, self._arm_dof_dim:], qs_idx_local=self._gripper_dof_idx, envs_idx=envs_idx)
-
-    def apply_action(
-        self, 
-        arm_action: torch.Tensor, 
-        gripper_action: torch.Tensor
-    ) -> None:
-        """
-        Apply action to robot.
-        
-        Parameters
-        ----------
-        arm_action : torch.Tensor
-            End-effector pose delta [B, 6] (position delta + orientation delta in RPY)
-        gripper_action : torch.Tensor
-            Gripper joint position targets [B, 12]
-        """
-        # Scale action for stronger effect
-        scaled_action = arm_action * self._action_scale
-        
-        # Compute arm joint positions using IK
-        if self._ik_method == "gs_ik":
-            arm_qpos = self._gs_ik(scaled_action)
-        elif self._ik_method == "dls_ik":
-            arm_qpos = self._dls_ik(scaled_action)
-        else:
-            raise ValueError(f"Invalid IK method: {self._ik_method}")
-        
-        # Apply arm control
-        self.arm_entity.control_dofs_position(position=arm_qpos, dofs_idx_local=self._arm_dof_idx)
-        
-        # Apply gripper control
-        self.gripper_entity.control_dofs_position(position=gripper_action, dofs_idx_local=self._gripper_dof_idx)
-    
-    def _gs_ik(self, action: torch.Tensor) -> torch.Tensor:
-        """Genesis inverse kinematics"""
-        delta_position = action[:, :3]
-        delta_orientation = action[:, 3:6]
-        
-        # Compute target pose
-        target_position = delta_position + self._ee_link.get_pos()
-        quat_rel = xyz_to_quat(delta_orientation, rpy=True, degrees=False)
-        target_orientation = transform_quat_by_quat(quat_rel, self._ee_link.get_quat())
-        
-        # Solve IK
-        q_pos = self.arm_entity.inverse_kinematics(
-            link=self._ee_link,
-            pos=target_position,
-            quat=target_orientation,
-            dofs_idx_local=self._arm_dof_idx,
-        )
-        return q_pos
-    
-    def _dls_ik(self, action: torch.Tensor) -> torch.Tensor:
-        """Damped least squares inverse kinematics"""
-        delta_pose = action[:, :6]
-        
-        jacobian = self.arm_entity.get_jacobian(link=self._ee_link)
-        jacobian_T = jacobian.transpose(1, 2)
-        lambda_matrix = (self._dls_lambda ** 2) * torch.eye(n=jacobian.shape[1], device=self._device)
-        
-        delta_joint_pos = (
-            jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
-        ).squeeze(-1)
-        
-        return self.arm_entity.get_dofs_position(self._arm_dof_idx) + delta_joint_pos
 
     def command_arm(self, target: Sequence[float] | torch.Tensor) -> None:
         """Command arm joints to target positions using PD control"""
@@ -585,37 +512,6 @@ class Manipulator:
         
         self.gripper_entity.control_dofs_position_velocity(position, velocity, self._gripper_dof_idx)
 
-    def command_full_state(
-        self,
-        arm_position: torch.Tensor,
-        arm_velocity: torch.Tensor,
-        gripper_position: torch.Tensor,
-        gripper_velocity: torch.Tensor
-    ) -> None:
-        """Command both arm and gripper with position and velocity targets"""
-        self.arm_entity.control_dofs_position_velocity(arm_position, arm_velocity, self._arm_dof_idx)
-        self.gripper_entity.control_dofs_position_velocity(gripper_position, gripper_velocity, self._gripper_dof_idx)
-    
-    def go_to_goal(self, goal_pose: torch.Tensor, gripper_target: torch.Tensor) -> None:
-        """
-        Go to goal pose using IK.
-        
-        Parameters
-        ----------
-        goal_pose : torch.Tensor
-            Target end-effector pose [B, 7] (position + quaternion)
-        gripper_target : torch.Tensor
-            Target gripper joint positions [B, 12]
-        """
-        q_pos = self.arm_entity.inverse_kinematics(
-            link=self._ee_link,
-            pos=goal_pose[:, :3],
-            quat=goal_pose[:, 3:7],
-            dofs_idx_local=self._arm_dof_idx,
-        )
-        self.arm_entity.control_dofs_position(position=q_pos, dofs_idx_local=self._arm_dof_idx)
-        self.gripper_entity.control_dofs_position(position=gripper_target, dofs_idx_local=self._gripper_dof_idx)
-
     # ============ Properties ============
     @property
     def base_pos(self) -> torch.Tensor:
@@ -669,3 +565,17 @@ class Manipulator:
         pos = self._palm_link.get_pos()
         quat = self._palm_link.get_quat()
         return torch.cat([pos, quat], dim=-1).to(self._device)
+    
+    @property
+    def finger_force_frames_pose(self) -> torch.Tensor:
+        """
+        All three finger force frames poses [B, 3, 7] (position + quaternion for each frame).
+        Returns stacked poses: [frame1, frame2, frame3]
+        """
+        poses = []
+        for frame_link in [self._tip1_force_frame, self._tip2_force_frame, self._tip3_force_frame]:
+            pos = frame_link.get_pos()
+            quat = frame_link.get_quat()
+            pose = torch.cat([pos, quat], dim=-1)
+            poses.append(pose)
+        return torch.stack(poses, dim=1).to(self._device)  # [B, 3, 7]

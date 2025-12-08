@@ -10,3 +10,6 @@
 [submodule "genesis/ext/FABRICS"]
 	path = genesis/ext/FABRICS
 	url = git@github.com:rollingball-3/FABRICS.git
+[submodule "genesis/ext/foam"]
+	path = genesis/ext/foam
+	url = https://github.com/CoMMALab/foam.git

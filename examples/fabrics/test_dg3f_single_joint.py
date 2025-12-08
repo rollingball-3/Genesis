@@ -93,7 +93,7 @@ def main():
     # Create scene with wide-angle camera
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(grid_center_x + 0.8, grid_center_y - 1.5, 1.2),
+            camera_pos=(grid_center_x + 0.5, grid_center_y - 1.0, 0.8),
             camera_lookat=(grid_center_x, grid_center_y, BASE_HEIGHT),
             camera_fov=70,
         ),
@@ -122,7 +122,7 @@ def main():
     # Add ONE camera to capture all grippers
     camera = scene.add_camera(
         res=(1280, 720),  # High resolution for grid view
-        pos=(grid_center_x + 0.8, grid_center_y - 1.5, 1.2),
+        pos=(grid_center_x + 0.5, grid_center_y - 1.0, 0.8),
         lookat=(grid_center_x, grid_center_y, BASE_HEIGHT),
         fov=70,
         GUI=False,
