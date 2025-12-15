@@ -83,19 +83,18 @@ class PathPlanner(ABC):
     # ------------------------------------------------------------------------------------
 
     def _sanitize_qposs(self, qpos_goal, qpos_start, envs_idx):
-        qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
+        qpos_cur = self._entity.get_qpos(envs_idx=envs_idx).clone()
 
-        qpos_goal, _, _ = self._solver._sanitize_1D_io_variables(
-            qpos_goal, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
-        )
+        assert qpos_goal is not None
+        qpos_goal, *_ = self._solver._sanitize_io_variables(qpos_goal, None, self._entity.n_qs, "qpos_idx", envs_idx)
         if qpos_start is None:
             qpos_start = qpos_cur
-        qpos_start, _, envs_idx = self._solver._sanitize_1D_io_variables(
-            qpos_start, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
+        qpos_start, _, envs_idx = self._solver._sanitize_io_variables(
+            qpos_start, None, self._entity.n_qs, "qpos_idx", envs_idx
         )
         if self._solver.n_envs == 0:
-            qpos_goal = qpos_goal.unsqueeze(0)
-            qpos_start = qpos_start.unsqueeze(0)
+            qpos_goal = qpos_goal[None]
+            qpos_start = qpos_start[None]
 
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
@@ -219,7 +218,7 @@ class PathPlanner(ABC):
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
             )
-            out[i_b] = out[i_b] or ti.cast(collision_detected, gs.ti_bool)
+            out[i_b_] = out[i_b_] or ti.cast(collision_detected, gs.ti_bool)
 
     @ti.func
     def _func_check_collision(
@@ -302,8 +301,11 @@ class PathPlanner(ABC):
 
 @ti.data_oriented
 class RRT(PathPlanner):
+    def __init__(self, entity):
+        super().__init__(entity)
+        self._is_rrt_init = False
+
     def _init_rrt_fields(self, goal_bias=0.05, max_nodes=2000, pos_tol=5e-3, max_step_size=0.1):
-        self._is_rrt_init = getattr(self, "_is_rrt_init", False)
         if not self._is_rrt_init:
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
@@ -502,7 +504,6 @@ class RRT(PathPlanner):
         assert self._solver.n_envs > 0 or envs_idx is None
 
         qpos_cur, qpos_goal, qpos_start, envs_idx = self._sanitize_qposs(qpos_goal, qpos_start, envs_idx)
-        envs_idx_local = torch.arange(len(envs_idx), device=gs.device)
         ignore_geom_pairs = self.get_exclude_geom_pairs((qpos_goal, qpos_start), envs_idx)
 
         is_plan_with_obj = False
@@ -559,9 +560,9 @@ class RRT(PathPlanner):
 
         gs.logger.debug(f"RRT planning time: {time.time() - time_start}")
 
-        is_invalid = self._rrt_is_active.to_torch(device=gs.device).bool()
+        is_invalid = self._rrt_is_active.to_torch(device=gs.device).bool()[envs_idx]
         ts = self._rrt_tree_size.to_torch(device=gs.device)
-        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)  # B
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx]  # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
         parents_idx = node_info["parent_idx"]
@@ -569,12 +570,12 @@ class RRT(PathPlanner):
 
         res = [g_n]
         for _ in range(ts.max()):
-            g_n = parents_idx[g_n, envs_idx_local]
+            g_n = parents_idx[g_n, envs_idx]
             res.append(g_n)
             if (g_n == 0).all():
                 break
         res_idx = torch.stack(res[::-1], dim=0)
-        sol = configurations[res_idx, envs_idx_local]  # N, B, DoF
+        sol = configurations[res_idx, envs_idx]  # N, B, DoF
 
         if is_invalid.all():
             if self._solver.n_envs > 0:
@@ -645,8 +646,11 @@ class RRT(PathPlanner):
 
 @ti.data_oriented
 class RRTConnect(PathPlanner):
+    def __init__(self, entity):
+        super().__init__(entity)
+        self._is_rrt_connect_init = False
+
     def _init_rrt_connect_fields(self, goal_bias=0.1, max_nodes=4000, max_step_size=0.05):
-        self._is_rrt_connect_init = getattr(self, "_is_rrt_connect_init", False)
         if not self._is_rrt_connect_init:
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
@@ -884,7 +888,6 @@ class RRTConnect(PathPlanner):
         assert self._solver.n_envs > 0 or envs_idx is None
 
         qpos_cur, qpos_goal, qpos_start, envs_idx = self._sanitize_qposs(qpos_goal, qpos_start, envs_idx)
-        envs_idx_local = torch.arange(len(envs_idx), device=gs.device)
         ignore_geom_pairs = self.get_exclude_geom_pairs([qpos_goal, qpos_start], envs_idx)
 
         is_plan_with_obj = False
@@ -948,9 +951,9 @@ class RRTConnect(PathPlanner):
             gs.logger.info(f"RRTConnect planning exceeded maximum number of nodes ({self._rrt_max_nodes}).")
 
         gs.logger.debug(f"RRTConnect planning time: {time.time() - time_start}")
-        is_invalid = self._rrt_is_active.to_torch(device=gs.device).bool()
+        is_invalid = self._rrt_is_active.to_torch(device=gs.device).bool()[envs_idx]
         ts = self._rrt_tree_size.to_torch(device=gs.device)
-        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)  # B
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx]  # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
         parents_idx = node_info["parent_idx"]
@@ -959,21 +962,21 @@ class RRTConnect(PathPlanner):
 
         res = [g_n]
         for _ in range(ts.max() // 2):
-            g_n = parents_idx[g_n, envs_idx_local]
+            g_n = parents_idx[g_n, envs_idx]
             res.append(g_n)
             if torch.all(g_n == 0):
                 break
         res_idx = torch.stack(res[::-1], dim=0)
 
-        c_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)  # B
+        c_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx]  # B
         res = []
         for _ in range(ts.max() // 2):
-            c_n = children_idx[c_n, envs_idx_local]
+            c_n = children_idx[c_n, envs_idx]
             res.append(c_n)
             if torch.all(c_n == 1):
                 break
         res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
-        sol = configurations[res_idx, envs_idx_local]  # N, B, DoF
+        sol = configurations[res_idx, envs_idx]  # N, B, DoF
 
         if is_invalid.all():
             if self._solver.n_envs > 0:
@@ -1073,7 +1076,7 @@ def align_waypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: i
             continue
         interpolated_path = torch.nn.functional.interpolate(
             t_path[i_b : i_b + 1, :, mask[:, i_b]], size=num_points, mode="linear", align_corners=True
-        ).squeeze(0)
+        )[0]
         res[:, i_b] = interpolated_path.T
     return res
 
@@ -1088,7 +1091,7 @@ def rrt_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
         path tensor in [N, B]
     """
     mask = (tensor > 0.0).to(gs.tc_float)  # N, B
-    mask_float = mask.T.unsqueeze(1)  # B 1, N
+    mask_float = mask.T[:, None]  # B 1, N
     kernel = torch.ones((1, 1, 3), device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0.0).squeeze(1).T
@@ -1105,7 +1108,7 @@ def rrt_connect_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
         path tensor in [N, B]
     """
     mask = (tensor > 0.0).to(gs.tc_float)  # N, B
-    mask_float = mask.T.unsqueeze(1)  # B 1, N
+    mask_float = mask.T[:, None]  # B 1, N
     kernel = torch.ones(1, 1, 3, device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0).squeeze(1).T

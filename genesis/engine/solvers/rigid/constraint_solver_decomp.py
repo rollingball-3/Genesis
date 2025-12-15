@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import numpy.typing as npt
 import gstaichi as ti
 import torch
 
@@ -12,9 +11,13 @@ import genesis.engine.solvers.rigid.backward_constraint_solver as backward_const
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
+from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
+
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 
 class ConstraintSolver:
@@ -40,7 +43,7 @@ class ConstraintSolver:
             4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
-            + self._solver.n_equalities_candidate * 6
+            + self._solver.n_candidate_equalities_ * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
@@ -103,10 +106,11 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
-    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None, cache_only: bool = False):
+    def clear(self, envs_idx=None, cache_only: bool = False):
         self._eq_const_info_cache.clear()
         if cache_only:
             return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_clear(
@@ -115,8 +119,32 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx=None, clear_contraints_info=True):
         self._eq_const_info_cache.clear()
+
+        if gs.use_zerocopy and not clear_contraints_info:
+            n_constraints = ti_to_torch(self.constraint_state.n_constraints, copy=False)
+            n_constraints_equality = ti_to_torch(self.constraint_state.n_constraints_equality, copy=False)
+            n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
+            qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
+            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
+                if envs_idx.dtype == torch.bool:
+                    n_constraints.masked_fill_(envs_idx, 0)
+                    n_constraints_equality.masked_fill_(envs_idx, 0)
+                    n_constraints_frictionloss.masked_fill_(envs_idx, 0)
+                    qacc_ws.masked_fill_(envs_idx[None], 0.0)
+                else:
+                    n_constraints.scatter_(0, envs_idx, 0)
+                    n_constraints_equality.scatter_(0, envs_idx, 0)
+                    n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                    qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
+            else:
+                n_constraints[envs_idx] = 0
+                n_constraints_equality[envs_idx] = 0
+                n_constraints_frictionloss[envs_idx] = 0
+                qacc_ws[:, envs_idx] = 0.0
+            return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_reset(
@@ -126,92 +154,87 @@ class ConstraintSolver:
         )
 
     def add_equality_constraints(self):
-        solver = self._solver
         add_equality_constraints(
-            links_info=solver.links_info,
-            links_state=solver.links_state,
-            dofs_state=solver.dofs_state,
-            dofs_info=solver.dofs_info,
-            joints_info=solver.joints_info,
-            equalities_info=solver.equalities_info,
+            links_info=self._solver.links_info,
+            links_state=self._solver.links_state,
+            dofs_state=self._solver.dofs_state,
+            dofs_info=self._solver.dofs_info,
+            joints_info=self._solver.joints_info,
+            equalities_info=self._solver.equalities_info,
             constraint_state=self.constraint_state,
             collider_state=self._collider._collider_state,
-            rigid_global_info=solver._rigid_global_info,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     def add_inequality_constraints(self):
-        solver = self._solver
         add_inequality_constraints(
-            links_info=solver.links_info,
-            links_state=solver.links_state,
-            dofs_state=solver.dofs_state,
-            dofs_info=solver.dofs_info,
-            joints_info=solver.joints_info,
+            links_info=self._solver.links_info,
+            links_state=self._solver.links_state,
+            dofs_state=self._solver.dofs_state,
+            dofs_info=self._solver.dofs_info,
+            joints_info=self._solver.joints_info,
             constraint_state=self.constraint_state,
             collider_state=self._collider._collider_state,
-            rigid_global_info=solver._rigid_global_info,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     def resolve(self):
-        solver = self._solver
-
         func_init_solver(
-            dofs_state=solver.dofs_state,
-            entities_info=solver.entities_info,
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
             constraint_state=self.constraint_state,
-            rigid_global_info=solver._rigid_global_info,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
         func_solve(
-            entities_info=solver.entities_info,
-            dofs_state=solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
-            rigid_global_info=solver._rigid_global_info,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
         func_update_qacc(
-            dofs_state=solver.dofs_state,
+            dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            errno=self._solver._errno,
         )
 
-        if solver._options.noslip_iterations > 0:
+        if self._solver._options.noslip_iterations > 0:
             self.noslip()
 
         func_update_contact_force(
-            links_state=solver.links_state,
+            links_state=self._solver.links_state,
             collider_state=self._collider._collider_state,
             constraint_state=self.constraint_state,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     def noslip(self):
-        solver = self._solver
-
         constraint_noslip.kernel_build_efc_AR_b(
-            dofs_state=solver.dofs_state,
-            entities_info=solver.entities_info,
-            rigid_global_info=solver._rigid_global_info,
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
         constraint_noslip.kernel_noslip(
             collider_state=self._collider._collider_state,
             constraint_state=self.constraint_state,
-            rigid_global_info=solver._rigid_global_info,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
         constraint_noslip.kernel_dual_finish(
-            dofs_state=solver.dofs_state,
-            entities_info=solver.entities_info,
-            rigid_global_info=solver._rigid_global_info,
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
@@ -303,18 +326,17 @@ class ConstraintSolver:
 
         return weld_const_info
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
-        if not unsafe:
-            assert link1_idx >= 0 and link2_idx >= 0
-            weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
-            link_a = weld_const_info["link_a"]
-            link_b = weld_const_info["link_b"]
-            assert not (
-                ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
-            ).any()
+        assert link1_idx >= 0 and link2_idx >= 0
+        weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
+        link_a = weld_const_info["link_a"]
+        link_b = weld_const_info["link_b"]
+        assert not (
+            ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
+        ).any()
 
         self._eq_const_info_cache.clear()
         overflow = kernel_add_weld_constraint(
@@ -330,12 +352,12 @@ class ConstraintSolver:
         if overflow:
             gs.logger.warning(
                 "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self.rigid_global_info.n_equalities_candidate.to_numpy()}). Please increase the value of "
+                f"({self.rigid_global_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(
             int(link1_idx),
@@ -1383,6 +1405,7 @@ def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
@@ -1392,6 +1415,8 @@ def func_update_qacc(
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
+            errno[None] = errno[None] | 0b00000000000000000000000000000100
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -1403,15 +1428,12 @@ def func_solve(
     static_rigid_sim_config: ti.template(),
 ):
     _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.grad.shape[0]
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        # this safeguard seems not necessary in normal execution
-        # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
-        if constraint_state.n_constraints[i_b] > 0:
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-            for it in range(rigid_global_info.iterations[None]):
+        # t0_start = ti.simt.timer.cuda_clock_i64()
+        if constraint_state.n_constraints[i_b] > 0 or constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
+            for _ in range(rigid_global_info.iterations[None]):
                 func_solve_body(
                     i_b,
                     entities_info=entities_info,
@@ -1424,6 +1446,8 @@ def func_solve(
                     break
         else:
             constraint_state.improved[i_b] = False
+        # t0_end = ti.simt.timer.cuda_clock_i64()
+        # constraint_state.timers[0, i_b_] = t0_end - t0_start
 
 
 @ti.func
@@ -1989,6 +2013,7 @@ def func_update_gradient(
         rigid_solver.func_solve_mass_batched(
             constraint_state.grad,
             constraint_state.Mgrad,
+            array_class.PLACEHOLDER,
             i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
@@ -2115,7 +2140,7 @@ def func_init_solver(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         func_update_constraint(
             i_b,
@@ -2166,7 +2191,7 @@ def kernel_add_weld_constraint(
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == rigid_global_info.n_equalities_candidate[None]:
+        if i_e == rigid_global_info.n_candidate_equalities[None]:
             overflow = True
         else:
             shared_pos = links_state.pos[link1_idx, i_b]

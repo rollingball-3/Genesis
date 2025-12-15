@@ -20,28 +20,18 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.gpu)
-
-    # Create output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"tmp/merge_entities_test/{timestamp}"
-    os.makedirs(output_dir, exist_ok=True)
-    video_path = os.path.join(output_dir, "merge_entities_collision.mp4")
-    print(f"📁 Output directory: {output_dir}")
-    print(f"🎥 Video will be saved to: {video_path}")
+    gs.init()
 
     ########################## create a scene ##########################
-    viewer_options = gs.options.ViewerOptions(
-        camera_pos=(0, -3.5, 2.5),
-        camera_lookat=(0.0, 0.0, 0.5),
-        camera_fov=40,
-        max_FPS=60,
-    )
-
     scene = gs.Scene(
-        viewer_options=viewer_options,
         sim_options=gs.options.SimOptions(
             dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0, -3.5, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=40,
+            max_FPS=60,
         ),
         show_viewer=args.vis,
     )
@@ -56,40 +46,48 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
 
     if args.comb == "urdf2urdf" or args.comb == "urdf2mjcf":
         gs.logger.info("loading URDF panda arm")
         franka = scene.add_entity(
-            gs.morphs.URDF(file="urdf/panda_bullet/panda_nohand.urdf", merge_fixed_links=False, fixed=True),
-            vis_mode="collision",
+            gs.morphs.URDF(
+                file="urdf/panda_bullet/panda_nohand.urdf",
+                merge_fixed_links=False,
+                fixed=True,
+            ),
+            # vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda arm")
         franka = scene.add_entity(
-            gs.morphs.MJCF(file="xml/franka_emika_panda/panda_nohand.xml"),
-            vis_mode="collision",
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda_nohand.xml",
+            ),
         )
 
     if args.comb == "urdf2urdf" or args.comb == "mjcf2urdf":
         gs.logger.info("loading URDF panda hand")
-        # NOTE: you need to fix the base link of the attaching entity
         hand = scene.add_entity(
-            gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf", merge_fixed_links=False, fixed=True),
-            vis_mode="collision",
+            gs.morphs.URDF(
+                file="urdf/panda_bullet/hand.urdf",
+                merge_fixed_links=False,
+            ),
+            # vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda hand")
         hand = scene.add_entity(
-            gs.morphs.MJCF(file="xml/franka_emika_panda/hand.xml"),
-            vis_mode="collision",
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/hand.xml",
+            ),
         )
 
     print([link.name for link in franka.links])
     print([link.name for link in hand.links])
-    scene.link_entities(franka, hand, "attachment", "hand")
+    hand.attach(franka, "attachment")
 
     ########################## build ##########################
     scene.build()

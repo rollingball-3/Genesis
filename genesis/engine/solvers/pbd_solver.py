@@ -1,7 +1,6 @@
 import math
 
 import numpy as np
-from numpy.typing import NDArray
 import gstaichi as ti
 
 import genesis as gs
@@ -13,6 +12,7 @@ from genesis.engine.entities import (
     PBDFreeParticleEntity,
     PBDParticleEntity,
 )
+from genesis.engine.entities.pbd_entity import PBDTetEntity
 from genesis.engine.states.solvers import PBDSolverState
 from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
@@ -912,10 +912,10 @@ class PBDSolver(Solver):
     @gs.assert_built
     def set_animate_particles_by_link(
         self,
-        particles_idx: NDArray[np.int32],
+        particles_idx,
         link_idx: int,
         links_state: LinksState,
-        envs_idx: NDArray[np.int32] | None = None,
+        envs_idx=None,
     ) -> None:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)
@@ -998,37 +998,37 @@ class PBDSolver(Solver):
     def n_fluid_particles(self):
         if self.is_built:
             return self._n_fluid_particles
-        return sum([getattr(entity, "n_fluid_particles", 0) for entity in self._entities])
+        return sum(entity.n_fluid_particles for entity in self._entities if isinstance(entity, PBDParticleEntity))
 
     @property
     def n_edges(self):
         if self.is_built:
             return self._n_edges
-        return sum([getattr(entity, "n_edges", 0) for entity in self._entities])
+        return sum(entity.n_edges for entity in self._entities if isinstance(entity, PBDTetEntity))
 
     @property
     def n_inner_edges(self):
         if self.is_built:
             return self._n_inner_edges
-        return sum([getattr(entity, "n_inner_edges", 0) for entity in self._entities])
+        return sum(entity.n_inner_edges for entity in self._entities if isinstance(entity, PBD2DEntity))
 
     @property
     def n_elems(self):
         if self.is_built:
             return self._n_elems
-        return sum([getattr(entity, "n_elems", 0) for entity in self._entities])
+        return sum(entity.n_elems for entity in self._entities if isinstance(entity, PBD3DEntity))
 
     @property
     def n_vverts(self):
         if self.is_built:
             return self._n_vverts
-        return sum([getattr(entity, "n_vverts", 0) for entity in self._entities])
+        return sum(entity.n_vverts for entity in self._entities)
 
     @property
     def n_vfaces(self):
         if self.is_built:
             return self._n_vfaces
-        return sum([getattr(entity, "n_vfaces", 0) for entity in self._entities])
+        return sum(entity.n_vfaces for entity in self._entities)
 
     @property
     def particle_size(self):

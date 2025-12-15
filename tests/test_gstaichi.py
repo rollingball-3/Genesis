@@ -124,7 +124,6 @@ def gs_static_child(args: list[str]):
     scene.build()
 
     scene.rigid_solver.collider.detection()
-    ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
@@ -145,16 +144,17 @@ def gs_static_child(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
+@pytest.mark.slow  # ~170s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
 @pytest.mark.parametrize("use_ndarray", [False, True])
-@pytest.mark.parametrize("enable_pure", [False, True])
+@pytest.mark.parametrize("enable_fastcache", [False, True])
 @pytest.mark.parametrize("enable_multicontact, expected_num_contacts", [(False, 1), (True, 4)])
 def test_static(
     enable_multicontact: bool,
     expected_num_contacts: int,
-    enable_pure: bool,
+    enable_fastcache: bool,
     test_backend: str,
     use_ndarray: bool,
     tmp_path: pathlib.Path,
@@ -169,34 +169,30 @@ def test_static(
             "--expected-num-contacts",
             str(expected_num_contacts),
             "--expected-use-src-ll-cache",
-            "1" if enable_pure and use_ndarray else "0",
+            "1" if enable_fastcache and use_ndarray else "0",
             "--expected-src-ll-cache-hit",
-            "1" if enable_pure and use_ndarray and it > 0 else "0",
+            "1" if enable_fastcache and use_ndarray and it > 0 else "0",
             "--backend",
             test_backend,
         ]
         if enable_multicontact:
             cmd_line += ["--enable-multi-contact"]
-        env_changes = {}
-        env_changes["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
-        env_changes["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
-        env_changes["TI_OFFLINE_CACHE"] = "1"
-        env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         env = dict(os.environ)
-        env.update(env_changes)
+        env.pop("GS_ENABLE_ZEROCOPY", None)
+        env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
+        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
+        env["TI_OFFLINE_CACHE"] = "1"
+        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
         proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
-        if proc.returncode == RET_SKIP:
+        return_code = proc.returncode
+        if return_code == RET_SKIP:
             pytest.skip(proc.stderr)
-        elif proc.returncode != RET_SUCCESS:
-            print("============================")
-            print("it", it)
-            for k, v in env_changes.items():
-                print(f"export {k}={v}")
-            print(" ".join(cmd_line))
-            print("stderr", proc.stderr)
-            print("stdout", proc.stdout)
-        assert proc.returncode == RET_SUCCESS
+        elif return_code != RET_SUCCESS:
+            print(proc.stdout)
+            print("-" * 100)
+            print(proc.stderr)
+        assert return_code == RET_SUCCESS
 
 
 def gs_num_envs_child(args: list[str]):
@@ -238,12 +234,13 @@ def gs_num_envs_child(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
+@pytest.mark.slow  # ~230s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
-@pytest.mark.parametrize("enable_pure", [False, True])
+@pytest.mark.parametrize("enable_fastcache", [False, True])
 @pytest.mark.parametrize("use_ndarray", [False, True])
-def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
+def test_num_envs(use_ndarray: bool, enable_fastcache: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     # Change n_envs each time, and check effect on reading from cache
     for it, n_envs in enumerate([3, 5, 7]):
         cmd_line = [
@@ -257,20 +254,21 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
             str(n_envs),
         ]
         env = dict(os.environ)
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
+        env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
+        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
         env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         # notes:
-        # - if we use pure, we won't get as far as fe-ll-cache
-        # - ndarray and pure therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
+        # - if we use fastcache, we won't get as far as fe-ll-cache
+        # - ndarray and fastcache therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
         # - not use ndarray will always try using the fe-ll-cache, but cache will be empty on first it
         #   but since we are changing num envs each time, using fields will never get a cache hit either
-        # soooo we are left only with (not pure) and (ndarray) and (it > 0)
-        expected_fe_ll_cache_hit = not enable_pure and use_ndarray and it > 0
+        # soooo we are left only with (not fastcache) and (ndarray) and (it > 0)
+        expected_fe_ll_cache_hit = not enable_fastcache and use_ndarray and it > 0
         # fields are not supported by src-ll-cache currently
-        expected_use_src_ll_cache = enable_pure and use_ndarray
-        expected_src_ll_cache_hit = enable_pure and use_ndarray and it > 0
+        expected_use_src_ll_cache = enable_fastcache and use_ndarray
+        expected_src_ll_cache_hit = enable_fastcache and use_ndarray and it > 0
         if expected_fe_ll_cache_hit:
             cmd_line += ["--expected-fe-ll-cache-hit"]
         if expected_use_src_ll_cache:
@@ -278,16 +276,14 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
         proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
-        if proc.returncode == RET_SKIP:
+        return_code = proc.returncode
+        if return_code == RET_SKIP:
             pytest.skip(proc.stderr)
-        elif proc.returncode != RET_SUCCESS:
-            print("============================")
-            print("it", it, "n_envs", n_envs)
-            print("cmd_line", cmd_line)
-            print("env", env)
-            print("stderr", proc.stderr)
-            print("stdout", proc.stdout)
-        assert proc.returncode == RET_SUCCESS
+        elif return_code != RET_SUCCESS:
+            print(proc.stdout)
+            print("-" * 100)
+            print(proc.stderr)
+        assert return_code == RET_SUCCESS
 
 
 def change_scene(args: list[str]):
@@ -310,19 +306,19 @@ def change_scene(args: list[str]):
         ),
         show_viewer=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     for i_obj in range(args.n_objs):
-        cube = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Box(
                 size=(0.4, 0.4, 0.4),
-                pos=(0.0, 0.5 * i_obj, 0.8),
+                pos=(0.0, 0.5 * i_obj, 0.5),
             )
         )
     scene.build(n_envs=args.n_envs)
 
-    for i in range(500):
+    for _ in range(60):
         scene.step()
 
     qpos = scene.sim.rigid_solver.get_qpos()
@@ -334,7 +330,7 @@ def change_scene(args: list[str]):
     assert qpos.shape[-1] == args.n_objs * 7
 
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
-    assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
+    assert_allclose(z, 0.2, atol=1e-3)
 
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
@@ -344,6 +340,7 @@ def change_scene(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
+@pytest.mark.slow  # ~120s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 # Note that, on GPU, PARA_LEVEL is changing between batched and non-batched simulation
@@ -355,9 +352,9 @@ def change_scene(args: list[str]):
         ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
     ],
 )
-@pytest.mark.parametrize("enable_pure", [True])
+@pytest.mark.parametrize("enable_fastcache", [True])
 def test_ndarray_no_compile(
-    enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
+    enable_fastcache: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
     # Iterate to make sure stuff is really being read from cache
     for i, (n_objs, n_envs) in enumerate(list_n_objs_n_envs):
@@ -371,25 +368,26 @@ def test_ndarray_no_compile(
             "--n_envs",
             str(n_envs),
             "--expected-src-ll-cache-hit",
-            "1" if enable_pure and i > 0 else "0",
+            "1" if enable_fastcache and i > 0 else "0",
             "--backend",
             test_backend,
         ]
         env = dict(os.environ)
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
+        env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1"
+        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
         env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
 
-        # Display error message only in case of failure
-        if proc.returncode == RET_SKIP:
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
+        return_code = proc.returncode
+        if return_code == RET_SKIP:
             pytest.skip(proc.stderr)
-        elif proc.returncode != RET_SUCCESS:
+        elif return_code != RET_SUCCESS:
             print(proc.stdout)
             print("-" * 100)
             print(proc.stderr)
-        assert proc.returncode == RET_SUCCESS
+        assert return_code == RET_SUCCESS
 
 
 # The following lines are critical for the test to work
