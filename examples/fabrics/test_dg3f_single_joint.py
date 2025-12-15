@@ -93,13 +93,13 @@ def main():
     # Create scene with wide-angle camera
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(grid_center_x + 0.5, grid_center_y - 1.0, 0.8),
+            camera_pos=(grid_center_x + 0.4, grid_center_y - 0.8, 0.6),
             camera_lookat=(grid_center_x, grid_center_y, BASE_HEIGHT),
             camera_fov=70,
         ),
         sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=10,
+            dt=1/60,
+            substeps=2,
         ),
         show_viewer=False,
     )

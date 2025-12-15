@@ -5,67 +5,16 @@ validated in ``test_arm_gripper_connection.py``.
 Includes ThrowEnv for RL training and Manipulator class for programmatic control.
 """
 from typing import Sequence
-import os
-from pathlib import Path
-import math
 
 import numpy as np
 import torch
 import yaml
 
 import genesis as gs
-
-def disable_collision_between_links(entity, link_name_a, link_name_b):
-    """Disable collision between two links by modifying collision pair validity."""
-    solver = entity.solver
-    link_a = entity.get_link(link_name_a)
-    link_b = entity.get_link(link_name_b)
-    
-    # Get geom indices for each link
-    geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
-    
-    for i_ga in range(solver.n_geoms):
-        for i_gb in range(i_ga + 1, solver.n_geoms):
-            i_la = geoms_link_idx[i_ga]
-            i_lb = geoms_link_idx[i_gb]
-            
-            # Check if this pair matches our target links
-            if (i_la == link_a.idx and i_lb == link_b.idx) or \
-                (i_la == link_b.idx and i_lb == link_a.idx):
-                # Disable this collision pair
-                solver.collider._collider_info.collision_pair_validity[i_ga, i_gb] = 0
-
-
-## ------------ Load initial config ----------------
-def load_initial_config(config_path: str = "examples/manipulation/initial_joint_config.yaml"):
-    """Load initial joint configuration from YAML file."""
-    # Try relative path first, then absolute
-    if not os.path.exists(config_path):
-        config_path = os.path.join(os.path.dirname(__file__), "initial_joint_config.yaml")
-    
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    # Parse arm joints in order
-    arm_joint_names = [
-        "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-        "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
-    ]
-    arm_positions = [config["arm_joints"][name] for name in arm_joint_names]
-    
-    # Parse gripper joints in order
-    gripper_joint_names = [
-        "F1M1", "F1M2", "F1M3", "F1M4",
-        "F2M1", "F2M2", "F2M3", "F2M4",
-        "F3M1", "F3M2", "F3M3", "F3M4"
-    ]
-    gripper_positions = [config["gripper_joints"][name] for name in gripper_joint_names]
-    
-    return arm_positions, gripper_positions
+from utils import load_initial_joint_config, disable_collision_between_links, load_throwable_objects_config
 
 # Load default joint angles from config file
-ARM_INITIAL_POSITIONS, GRIPPER_INITIAL_POSITIONS = load_initial_config()
-DEFAULT_JOINT_ANGLES = ARM_INITIAL_POSITIONS + GRIPPER_INITIAL_POSITIONS
+DEFAULT_JOINT_ANGLES = load_initial_joint_config()
 
 
 ## ------------ ThrowEnv ----------------
@@ -83,25 +32,28 @@ class ThrowEnv:
         show_viewer: bool = False,
     ) -> None:
         self.num_envs = env_cfg["num_envs"]
+        # TODO define obs
         self.num_obs = env_cfg["num_obs"]
+        # TODO define privileged obs
         self.num_privileged_obs = None
+        # TODO define actions
         self.num_actions = env_cfg["num_actions"]
-        self.image_width = env_cfg.get("image_resolution", [128, 128])[0]
-        self.image_height = env_cfg.get("image_resolution", [128, 128])[1]
+        # TODO define image shape
+        self.image_width = env_cfg.get("image_resolution", [1280, 720])[0]
+        self.image_height = env_cfg.get("image_resolution", [1280, 720])[1]
         self.rgb_image_shape = (3, self.image_height, self.image_width)
         self.device = gs.device
 
         self.ctrl_dt = env_cfg["ctrl_dt"]
-        self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.ctrl_dt)
+        self.max_episode_length = env_cfg["max_episode_length"]
 
         # configs
         self.env_cfg = env_cfg
         self.reward_scales = reward_cfg
-        self.action_scales = torch.tensor(env_cfg["action_scales"], device=self.device)
 
         # == setup scene ==
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=2),
+            sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=10),
             rigid_options=gs.options.RigidOptions(
                 dt=self.ctrl_dt,
                 constraint_solver=gs.constraint_solver.Newton,
@@ -123,38 +75,91 @@ class ThrowEnv:
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
 
         # == add robot ==
-        self.robot = Manipulator(
+        self.robot:Manipulator = Manipulator(
             num_envs=self.num_envs,
             scene=self.scene,
             device=self.device,
             base_height=robot_cfg.get("base_height", 0.0),
         )
 
-        # == add throwable object ==
-        self.object = self.scene.add_entity(
-            gs.morphs.Sphere(
-                radius=env_cfg.get("ball_radius", 0.05),
-                pos=(0.0, 0.0, 0.5),
-            ),
-            surface=gs.surfaces.Rough(
-                diffuse_texture=gs.textures.ColorTexture(
-                    color=(1.0, 0.0, 0.0),
+        # Load throwable objects configuration
+        throwable_objects_config = load_throwable_objects_config()
+        # Add throwable objects from the configuration
+        self.objects = []
+        for i, obj_config in enumerate(throwable_objects_config):
+            obj_name = obj_config["name"]  # Get object name from config
+            urdf_path = obj_config["urdf_path"]
+            # Add the object to the scene
+            obj = self.scene.add_entity(
+                gs.morphs.URDF(
+                    file=urdf_path,
+                    fixed=False,  # Make the object movable
                 ),
+                surface=gs.surfaces.Rough(),
+                vis_mode = "collision",
+            )
+            self.objects.append(obj)
+        
+        # Add a simple Box object for testing purposes
+        box_obj = self.scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),  # 0.2m x 0.2m x 0.2m box
+                fixed=False,  # Make the box movable
             ),
+            surface=gs.surfaces.Rough(),
+            vis_mode = "collision",
         )
+        self.objects.append(box_obj)
 
-        # == add cameras (optional) ==
-        if env_cfg.get("use_camera", False):
-            self.camera = self.scene.add_camera(
+        # Add observation cameras (for RL agent's visual input)
+        self.observation_cameras = {
+            'right': self.scene.add_camera(
+                model='pinhole',
                 res=(self.image_width, self.image_height),
-                pos=(1.5, 0.0, 1.0),
-                lookat=(0.0, 0.0, 0.5),
+                pos=(1.5, -1.5, 3.0),  # Right side view
+                lookat=(1.5, 0.5, 0.5),  # Look at the center of the scene
+                fov=60,
+                GUI=False,  # Not shown in GUI, only for observation
+            ),
+            'front': self.scene.add_camera(
+                model='pinhole',
+                res=(self.image_width, self.image_height),
+                pos=(3.0, 0.0, 3.0),  # Front view
+                lookat=(1.5, 0.5, 0.5),
                 fov=60,
                 GUI=False,
-            )
+            ),
+            'left': self.scene.add_camera(
+                model='pinhole',
+                res=(self.image_width, self.image_height),
+                pos=(1.5, 1.5, 3.0),  # Left side view
+                lookat=(1.5, 0.5, 0.5),
+                fov=60,
+                GUI=False,
+            ),
+            'top': self.scene.add_camera(
+                model='pinhole',
+                res=(self.image_width, self.image_height),
+                pos=(1.5, 0.0, 6.0),  # Top-down view
+                lookat=(1.5, 0.5, 0.5),
+                fov=60,
+                GUI=False,
+            ),
+        }
+
+        # Add global visualization camera (for debugging and monitoring)
+        self.global_camera = self.scene.add_camera(
+            model='pinhole',
+            res=(self.image_width, self.image_height),
+            pos=(-3.0, -3.0, 4.0),  # High global view
+            lookat=(1.5, 1.5, 1.0),  # Look at the center of the scene
+            fov=45,
+            GUI=False,  # Show in GUI for visualization
+            debug=True,  # Mark as debug camera to avoid interfering with observation cameras
+        )
 
         # build scene
-        self.scene.build(n_envs=env_cfg["num_envs"])
+        self.scene.build(n_envs=env_cfg["num_envs"], env_spacing=(2.0, 2.0))
         
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
@@ -181,20 +186,70 @@ class ThrowEnv:
         """Reset specific environments"""
         if len(envs_idx) == 0:
             return
+        
+        # Sanitize envs_idx using scene's method to ensure it's 1D
+        envs_idx = self.scene._sanitize_envs_idx(envs_idx)
+        
         self.episode_length_buf[envs_idx] = 0
 
         # reset robot
         self.robot.reset(envs_idx)
 
-        # reset object to gripper position
-        # TODO: Implement object reset logic
-        pass
+        # reset objects
+        # Select a random object from self.objects to be thrown
+        selected_object_idx = torch.randint(0, len(self.objects), (1,), device=self.device).item()
+        thrown_object = self.objects[selected_object_idx]
+        
+        # Set thrown object position at x = [-1.0, 1.0] ,y = [-0.5, 2.5], z = [1.0, 2.0]
+        # Create object_pos with shape [len(envs_idx), 3]
+        thrown_object_pos = torch.zeros((len(envs_idx), 3), device=self.device)
+        thrown_object_pos[:, 0] = -1.0 + torch.rand((len(envs_idx),), device=self.device) * 2.0  # x: [-1, 1]
+        thrown_object_pos[:, 1] = -0.5 + torch.rand((len(envs_idx),), device=self.device) * 3.0  # y: [-0.5, 2.5]
+        thrown_object_pos[:, 2] = 1.0 + torch.rand((len(envs_idx),), device=self.device) * 1.0  # z
+        
+        # Set position of thrown object - use envs_idx directly
+        thrown_object.set_pos(thrown_object_pos, envs_idx=envs_idx)
+        
+        # 3. give thrown object initial velocity to throw toward robot, robot base is [0, 0, 0]
+        # Calculate direction from object to robot base
+        direction_to_robot = torch.zeros_like(thrown_object_pos)
+        direction_to_robot[:, 0] = -thrown_object_pos[:, 0]  # x direction: from object to robot (0,0,0)
+        direction_to_robot[:, 1] = -thrown_object_pos[:, 1]  # y direction: from object to robot (0,0,0)
+        direction_to_robot[:, 2] = -thrown_object_pos[:, 2] * 0.5  # z direction: slight downward motion
+        
+        # Normalize direction vector
+        direction_magnitude = torch.norm(direction_to_robot, dim=1, keepdim=True) + 1e-8
+        normalized_direction = direction_to_robot / direction_magnitude
+        
+        # Set initial velocity with magnitude between 1.0 and 3.0
+        velocity_magnitude = 1.0 + torch.rand((len(envs_idx), 1), device=self.device) * 2.0
+        linear_vel = normalized_direction * velocity_magnitude
+        
+        # Create 6-DOF velocity tensor (3 linear, 3 angular with zero)
+        angular_vel = torch.zeros_like(linear_vel)
+        object_vel = torch.cat([linear_vel, angular_vel], dim=1)
+        
+        # Set velocity of thrown object with correct 6 DOFs
+        thrown_object.set_dofs_velocity(object_vel, envs_idx=envs_idx)
+        
+        # 4. Set all other objects to a position that doesn't interfere with the throwing task
+        # Place them far away from the main task area
+        for i, obj in enumerate(self.objects):
+            if i != selected_object_idx:
+                # Place non-thrown objects far away (x=10.0, y=10.0, z=5.0)
+                non_thrown_pos = torch.full((len(envs_idx), 3), 10.0, device=self.device)
+                non_thrown_pos[:, 2] = 5.0  # Set z to 5.0
+                obj.set_pos(non_thrown_pos, envs_idx=envs_idx)
+                
+                # Set their velocity to zero
+                zero_vel = torch.zeros((len(envs_idx), 6), device=self.device)
+                obj.set_dofs_velocity(zero_vel, envs_idx=envs_idx)
 
         # fill extras
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
             self.extras["episode"]["rew_" + key] = (
-                torch.mean(self.episode_sums[key][envs_idx]).item() / self.env_cfg["episode_length_s"]
+                torch.mean(self.episode_sums[key][envs_idx]).item() / self.max_episode_length
             )
             self.episode_sums[key][envs_idx] = 0.0
 
@@ -211,8 +266,6 @@ class ThrowEnv:
         self.episode_length_buf += 1
 
         # apply action
-        actions = self.rescale_action(actions)
-        
         # TODO: Implement action application
         # arm_action = actions[:, :6]  # ee pose delta
         # gripper_action = actions[:, 6:]  # gripper joint targets
@@ -239,13 +292,57 @@ class ThrowEnv:
 
     def get_observations(self) -> tuple[torch.Tensor, dict]:
         """Get observations for the policy"""
-        # TODO: Implement observation logic
-        # Example observation components:
-        # - robot state (joint positions, velocities)
-        # - object state (position, velocity)
-        # - goal state (target landing position)
-        obs_tensor = torch.zeros((self.num_envs, self.num_obs), device=self.device)
+        # Get visual observations from all cameras
+        visual_obs = {}
+        for camera_name, camera in self.observation_cameras.items():
+            # Render image from camera
+            rgb_image = camera.render()
+            visual_obs[camera_name] = rgb_image
+        
+        # Get robot state observations
+        robot_joint_pos = self.robot.get_joint_positions()
+        robot_joint_vel = self.robot.get_joint_velocities()
+        robot_ee_pose = self.robot.ee_pose
+        
+        # Get object state observations
+        object_pos = torch.zeros((self.num_envs, 3), device=self.device)
+        object_vel = torch.zeros((self.num_envs, 6), device=self.device)
+        for obj in self.objects:
+            object_pos += obj.get_pos()
+            object_vel += obj.get_dofs_velocity()
+        object_pos /= len(self.objects)
+        object_vel /= len(self.objects)
+        
+        # Concatenate all non-visual observations into a tensor
+        obs_components = [
+            robot_joint_pos,
+            robot_joint_vel,
+            robot_ee_pose.view(self.num_envs, -1),  # Flatten pose
+            object_pos,
+            object_vel,
+        ]
+        
+        # Ensure all components have the right shape (num_envs, ...)
+        for i, component in enumerate(obs_components):
+            if component.dim() == 1:
+                obs_components[i] = component.unsqueeze(1)
+        
+        # Concatenate all components
+        obs_tensor = torch.cat(obs_components, dim=1)[:, :self.num_obs]  # Truncate to expected size
+        
+        # Update extras with observations
         self.extras["observations"]["critic"] = obs_tensor
+        self.extras["observations"]["visual"] = visual_obs
+        self.extras["observations"]["robot_state"] = {
+            "joint_pos": robot_joint_pos,
+            "joint_vel": robot_joint_vel,
+            "ee_pose": robot_ee_pose,
+        }
+        self.extras["observations"]["object_state"] = {
+            "pos": object_pos,
+            "vel": object_vel,
+        }
+        
         return obs_tensor, self.extras
 
     def get_privileged_observations(self) -> None:
@@ -269,10 +366,7 @@ class ThrowEnv:
         self.extras["time_outs"][time_out_idx] = 1.0
         return self.reset_buf.nonzero(as_tuple=True)[0]
 
-    def rescale_action(self, action: torch.Tensor) -> torch.Tensor:
-        """Rescale actions by action scales"""
-        rescaled_action = action * self.action_scales
-        return rescaled_action
+
 
     # ------------ Reward functions (to be implemented) ----------------
     def _reward_tracking(self) -> torch.Tensor:
@@ -306,32 +400,17 @@ class Manipulator:
         self._device = device
         
         from genesis.engine.entities.rigid_entity import RigidEntity
-        # 分开加载因为
-        self.arm_entity:RigidEntity = scene.add_entity(
+        self.robot:RigidEntity = scene.add_entity(
             gs.morphs.URDF(
-                file="urdf/cs63/cs63.urdf",
+                file="urdf/cs63_tesollo/cs63_tesollo.urdf",
                 merge_fixed_links=False,
                 fixed=True,
                 pos=(0.0, 0.0, base_height),
             ),
             material=gs.materials.Rigid(gravity_compensation=1.0),
+            vis_mode = "collision",
         )
-        self.gripper_entity:RigidEntity = scene.add_entity(
-            gs.morphs.URDF(
-                file="urdf/DG3F/urdf/delto_gripper_3f.urdf",
-                merge_fixed_links=False,
-                fixed=True,
-                decompose_robot_error_threshold=0.15, # Force better decomposition
-            ),
-            material=gs.materials.Rigid(gravity_compensation=1.0),
-        )
-        scene.link_entities(
-            parent_entity=self.arm_entity,
-            child_entity=self.gripper_entity,
-            parent_link_name="delto_base_link_cs63",
-            child_link_name="delto_base_link",
-        )
-        
+
         self._init_joint_indices()
         self._arm_command = None
         self._gripper_command = None
@@ -366,32 +445,32 @@ class Manipulator:
         # Arm DOF indices
         self._arm_dof_dim = 6
         self._arm_dof_idx = torch.tensor(
-            [self.arm_entity.get_joint(name).dofs_idx_local[0] for name in arm_joints_name],
+            [self.robot.get_joint(name).dofs_idx_local[0] for name in arm_joints_name],
             device=self._device
         )
         
         # Gripper DOF indices
         self._gripper_dof_dim = 12
         self._gripper_dof_idx = torch.tensor(
-            [self.gripper_entity.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name],
+            [self.robot.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name],
             device=self._device
         )
         
         # End-effector link (flange from arm)
-        self._ee_link = self.arm_entity.get_link("wrist_3_link")
+        self._ee_link = self.robot.get_link("wrist_3_link")
         
         # Gripper finger tip links
-        self._finger1_tip_link = self.gripper_entity.get_link("F1_TIP")
-        self._finger2_tip_link = self.gripper_entity.get_link("F2_TIP")
-        self._finger3_tip_link = self.gripper_entity.get_link("F3_TIP")
+        self._finger1_tip_link = self.robot.get_link("F1_TIP")
+        self._finger2_tip_link = self.robot.get_link("F2_TIP")
+        self._finger3_tip_link = self.robot.get_link("F3_TIP")
         
         # Force frame links (defined in cs63_tesollo.urdf)
-        self._tip1_force_frame = self.gripper_entity.get_link("tip1_force_frame")
-        self._tip2_force_frame = self.gripper_entity.get_link("tip2_force_frame")
-        self._tip3_force_frame = self.gripper_entity.get_link("tip3_force_frame")
+        self._tip1_force_frame = self.robot.get_link("tip1_force_frame")
+        self._tip2_force_frame = self.robot.get_link("tip2_force_frame")
+        self._tip3_force_frame = self.robot.get_link("tip3_force_frame")
         
         # Palm link (gripper base control frame)
-        self._palm_link = self.gripper_entity.get_link("palm_link")
+        self._palm_link = self.robot.get_link("palm_link")
         
         # Default joint angles
         self._default_joint_angles = DEFAULT_JOINT_ANGLES
@@ -407,23 +486,23 @@ class Manipulator:
         # DG3F gripper PD control parameters (12 joints: 3 fingers × 4 joints each)
         # All joints use same gains based on ROS controller config (p:1.2, d:0.1)
         # Scaled up for Genesis simulation environment
-        gripper_kp = torch.tensor([60] * 12, device=self._device)
-        gripper_kv = torch.tensor([5] * 12, device=self._device)
-        gripper_force_min = torch.tensor([-5] * 12, device=self._device)
-        gripper_force_max = torch.tensor([5] * 12, device=self._device)
+        gripper_kp = torch.tensor([120] * 12, device=self._device)
+        gripper_kv = torch.tensor([10] * 12, device=self._device)
+        gripper_force_min = torch.tensor([-10] * 12, device=self._device)
+        gripper_force_max = torch.tensor([10] * 12, device=self._device)
 
-        self.arm_entity.set_dofs_kp(arm_kp, self._arm_dof_idx)
-        self.arm_entity.set_dofs_kv(arm_kv, self._arm_dof_idx)
-        self.arm_entity.set_dofs_force_range(arm_force_min, arm_force_max, self._arm_dof_idx)
+        self.robot.set_dofs_kp(arm_kp, self._arm_dof_idx)
+        self.robot.set_dofs_kv(arm_kv, self._arm_dof_idx)
+        self.robot.set_dofs_force_range(arm_force_min, arm_force_max, self._arm_dof_idx)
         
-        self.gripper_entity.set_dofs_kp(gripper_kp, self._gripper_dof_idx)
-        self.gripper_entity.set_dofs_kv(gripper_kv, self._gripper_dof_idx)
-        self.gripper_entity.set_dofs_force_range(gripper_force_min, gripper_force_max, self._gripper_dof_idx)
+        self.robot.set_dofs_kp(gripper_kp, self._gripper_dof_idx)
+        self.robot.set_dofs_kv(gripper_kv, self._gripper_dof_idx)
+        self.robot.set_dofs_force_range(gripper_force_min, gripper_force_max, self._gripper_dof_idx)
         
         # Disable collision between F*_02 links and delto_base_link (only once after build)
         if not self._scene_built:
             for finger in ["F1", "F2", "F3"]:
-                disable_collision_between_links(self.gripper_entity, f"{finger}_02", "delto_base_link")
+                disable_collision_between_links(self.robot, f"{finger}_02", "delto_base_link")
             print("✅ Disabled collision between F*_02 links and delto_base_link")
             self._scene_built = True
 
@@ -439,10 +518,10 @@ class Manipulator:
         ).repeat(len(envs_idx), 1)
         
         # Set arm positions
-        self.arm_entity.set_qpos(default_joint_angles[:, :self._arm_dof_dim], qs_idx_local=self._arm_dof_idx, envs_idx=envs_idx)
+        self.robot.set_qpos(default_joint_angles[:, :self._arm_dof_dim], qs_idx_local=self._arm_dof_idx, envs_idx=envs_idx)
         
         # Set gripper positions
-        self.gripper_entity.set_qpos(default_joint_angles[:, self._arm_dof_dim:], qs_idx_local=self._gripper_dof_idx, envs_idx=envs_idx)
+        self.robot.set_qpos(default_joint_angles[:, self._arm_dof_dim:], qs_idx_local=self._gripper_dof_idx, envs_idx=envs_idx)
 
     def command_arm(self, target: Sequence[float] | torch.Tensor) -> None:
         """Command arm joints to target positions using PD control"""
@@ -450,7 +529,7 @@ class Manipulator:
             target = torch.tensor(target, dtype=torch.float32, device=self._device)
         if target.ndim == 1:
             target = target.unsqueeze(0).repeat(self._num_envs, 1)
-        self.arm_entity.control_dofs_position(target, self._arm_dof_idx)
+        self.robot.control_dofs_position(target, self._arm_dof_idx)
 
     def command_gripper(self, target: Sequence[float] | torch.Tensor) -> None:
         """Command gripper joints to target positions using PD control"""
@@ -458,7 +537,7 @@ class Manipulator:
             target = torch.tensor(target, dtype=torch.float32, device=self._device)
         if target.ndim == 1:
             target = target.unsqueeze(0).repeat(self._num_envs, 1)
-        self.gripper_entity.control_dofs_position(target, self._gripper_dof_idx)
+        self.robot.control_dofs_position(target, self._gripper_dof_idx)
 
     def command_arm_force(self, force: Sequence[float] | torch.Tensor) -> None:
         """Apply force/torque control to arm joints"""
@@ -466,7 +545,7 @@ class Manipulator:
             force = torch.tensor(force, dtype=torch.float32, device=self._device)
         if force.ndim == 1:
             force = force.unsqueeze(0).repeat(self._num_envs, 1)
-        self.arm_entity.control_dofs_force(force, self._arm_dof_idx)
+        self.robot.control_dofs_force(force, self._arm_dof_idx)
 
     def command_gripper_force(self, force: Sequence[float] | torch.Tensor) -> None:
         """Apply force/torque control to gripper joints"""
@@ -474,7 +553,7 @@ class Manipulator:
             force = torch.tensor(force, dtype=torch.float32, device=self._device)
         if force.ndim == 1:
             force = force.unsqueeze(0).repeat(self._num_envs, 1)
-        self.gripper_entity.control_dofs_force(force, self._gripper_dof_idx)
+        self.robot.control_dofs_force(force, self._gripper_dof_idx)
 
     def command_arm_position_velocity(
         self, 
@@ -492,7 +571,7 @@ class Manipulator:
         if velocity.ndim == 1:
             velocity = velocity.unsqueeze(0).repeat(self._num_envs, 1)
         
-        self.arm_entity.control_dofs_position_velocity(position, velocity, self._arm_dof_idx)
+        self.robot.control_dofs_position_velocity(position, velocity, self._arm_dof_idx)
 
     def command_gripper_position_velocity(
         self,
@@ -510,13 +589,23 @@ class Manipulator:
         if velocity.ndim == 1:
             velocity = velocity.unsqueeze(0).repeat(self._num_envs, 1)
         
-        self.gripper_entity.control_dofs_position_velocity(position, velocity, self._gripper_dof_idx)
+        self.robot.control_dofs_position_velocity(position, velocity, self._gripper_dof_idx)
+    
+    def get_joint_positions(self) -> torch.Tensor:
+        """Get current joint positions of arm and gripper"""
+        return self.robot.get_dofs_position()[..., torch.cat([self._arm_dof_idx, self._gripper_dof_idx])]
+    
+    def get_joint_velocities(self) -> torch.Tensor:
+        """Get current joint velocities of arm and gripper"""
+        return self.robot.get_dofs_velocity()[..., torch.cat([self._arm_dof_idx, self._gripper_dof_idx])]
+    
+
 
     # ============ Properties ============
     @property
     def base_pos(self) -> torch.Tensor:
         """Robot base position"""
-        return self.arm_entity.get_pos().to(self._device)
+        return self.robot.get_pos().to(self._device)
     
     @property
     def ee_pose(self) -> torch.Tensor:
@@ -527,8 +616,7 @@ class Manipulator:
     
     @property
     def finger_tips_pose(self) -> torch.Tensor:
-        """
-        All three finger tips poses [B, 3, 7] (position + quaternion for each finger).
+        """All three finger tips poses [B, 3, 7] (position + quaternion for each finger).
         Returns stacked poses: [finger1, finger2, finger3]
         """
         poses = []
@@ -542,22 +630,22 @@ class Manipulator:
     @property
     def arm_qpos(self) -> torch.Tensor:
         """Arm joint positions [B, 6]"""
-        return self.arm_entity.get_dofs_position(self._arm_dof_idx).to(self._device)
+        return self.robot.get_dofs_position(self._arm_dof_idx).to(self._device)
     
     @property
     def gripper_qpos(self) -> torch.Tensor:
         """Gripper joint positions [B, 12]"""
-        return self.gripper_entity.get_dofs_position(self._gripper_dof_idx).to(self._device)
+        return self.robot.get_dofs_position(self._gripper_dof_idx).to(self._device)
     
     @property
     def arm_qvel(self) -> torch.Tensor:
         """Arm joint velocities [B, 6]"""
-        return self.arm_entity.get_dofs_velocity(self._arm_dof_idx).to(self._device)
+        return self.robot.get_dofs_velocity(self._arm_dof_idx).to(self._device)
     
     @property
     def gripper_qvel(self) -> torch.Tensor:
         """Gripper joint velocities [B, 12]"""
-        return self.gripper_entity.get_dofs_velocity(self._gripper_dof_idx).to(self._device)
+        return self.robot.get_dofs_velocity(self._gripper_dof_idx).to(self._device)
     
     @property
     def palm_pose(self) -> torch.Tensor:

@@ -1,6 +1,8 @@
 import argparse
 import numpy as np
 import genesis as gs
+import os
+from datetime import datetime
 
 
 COMB = {
@@ -20,6 +22,14 @@ def main():
     ########################## init ##########################
     gs.init(backend=gs.gpu)
 
+    # Create output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = f"tmp/merge_entities_test/{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+    video_path = os.path.join(output_dir, "merge_entities_collision.mp4")
+    print(f"📁 Output directory: {output_dir}")
+    print(f"🎥 Video will be saved to: {video_path}")
+
     ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
@@ -36,6 +46,15 @@ def main():
         show_viewer=args.vis,
     )
 
+    # Add camera for recording
+    camera = scene.add_camera(
+        res=(1280, 720),
+        pos=(0, -3.5, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=40,
+        GUI=False,
+    )
+
     ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
@@ -45,11 +64,13 @@ def main():
         gs.logger.info("loading URDF panda arm")
         franka = scene.add_entity(
             gs.morphs.URDF(file="urdf/panda_bullet/panda_nohand.urdf", merge_fixed_links=False, fixed=True),
+            vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda arm")
         franka = scene.add_entity(
             gs.morphs.MJCF(file="xml/franka_emika_panda/panda_nohand.xml"),
+            vis_mode="collision",
         )
 
     if args.comb == "urdf2urdf" or args.comb == "mjcf2urdf":
@@ -57,11 +78,13 @@ def main():
         # NOTE: you need to fix the base link of the attaching entity
         hand = scene.add_entity(
             gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf", merge_fixed_links=False, fixed=True),
+            vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda hand")
         hand = scene.add_entity(
             gs.morphs.MJCF(file="xml/franka_emika_panda/hand.xml"),
+            vis_mode="collision",
         )
 
     print([link.name for link in franka.links])
@@ -70,6 +93,9 @@ def main():
 
     ########################## build ##########################
     scene.build()
+    
+    # Start recording after scene is built
+    camera.start_recording()
 
     arm_joints_name = (
         "joint1",
@@ -149,6 +175,11 @@ def main():
             )
 
         scene.step()
+        camera.render()
+
+    # Stop recording and save video
+    camera.stop_recording(save_to_filename=video_path)
+    print(f"✅ Video saved: {video_path}")
 
 
 if __name__ == "__main__":

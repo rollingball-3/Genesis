@@ -1,0 +1,28 @@
+# Configuration for throwable objects
+objects:
+  - name: "002_master_chef_can"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/002_master_chef_can.urdf
+  - name: "003_cracker_box"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/003_cracker_box.urdf
+  - name: "006_mustard_bottle"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/006_mustard_bottle.urdf
+  - name: "007_tuna_fish_can"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/007_tuna_fish_can.urdf
+  - name: "008_pudding_box"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/008_pudding_box.urdf
+  - name: "011_banana"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/011_banana.urdf
+  - name: "012_strawberry"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/012_strawberry.urdf
+  - name: "013_apple"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/013_apple.urdf
+  - name: "014_lemon"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/014_lemon.urdf
+  - name: "022_windex_bottle"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/022_windex_bottle.urdf
+  - name: "024_bowl"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/024_bowl.urdf
+  - name: "025_mug"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/025_mug.urdf
+  - name: "033_spatula"
+    urdf_path: /data/qiufangzhou/ycb_urdfs/ycb_assets/033_spatula.urdf
